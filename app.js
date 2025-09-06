@@ -304,8 +304,9 @@ aiNextBtn.addEventListener('click', async () => {
   if (!frames.length) { statusEl.textContent = 'No base frame. Draw or generate one first.'; return; }
   const w = frames[0].width, h = frames[0].height;
   const anim = el('aiAnimPrompt').value.trim();
+  const base = el('aiBasePrompt').value.trim();
   const prev = frames[frames.length - 1];
-  const prompt = `Generate the next animation frame continuing subtle motion${anim ? ` toward: "${anim}"` : ''}. Preserve subject identity and composition; minimal change for smooth animation.`;
+  const prompt = `Generate the next animation frame continuing subtle motion${anim ? ` toward: "${anim}"` : ''}. Keep consistent with this base description: "${base || 'same scene and subject as the previous frame'}". Preserve subject identity and composition; minimal change for smooth animation.`;
   aiNextBtn.disabled = true; btn.disabled = true; statusEl.textContent = 'Generating next frame...';
   try {
     const res = await generateImageSafe(prompt, { width: w, height: h, image_inputs: [{ url: prev.toDataURL() }] }, 'Next frame');
