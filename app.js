@@ -150,17 +150,17 @@ async function appendEntry(dataUrl, comment){
   bc.postMessage({ type:'confirm', year: YEAR_KEY, day: dayIndex });
 }
 
-document.getElementById('prevConsensus').addEventListener('click', ()=>{
+document.getElementById('prevConsensus')?.addEventListener('click', ()=>{
   // Move to previous day
   dayIndex = (dayIndex - 1 + DAYS) % DAYS;
   render();
 });
-document.getElementById('nextConsensus').addEventListener('click', ()=>{
+document.getElementById('nextConsensus')?.addEventListener('click', ()=>{
   dayIndex = (dayIndex + 1) % DAYS;
   render();
 });
 
-document.getElementById('genNext').addEventListener('click', async ()=>{
+document.getElementById('genNext')?.addEventListener('click', async ()=>{
   genNextBtn.disabled = true; statusEl.textContent = 'Generating next frame…';
   try {
     const col = readColumn(YEAR_KEY, dayIndex);
@@ -287,34 +287,34 @@ drawCanvas && drawCanvas.addEventListener('touchstart', e => { e.preventDefault(
 drawCanvas && drawCanvas.addEventListener('touchmove', e => { e.preventDefault(); const p = getPos(e); lineTo(p.x,p.y); }, {passive:false});
 drawCanvas && drawCanvas.addEventListener('touchend', e => { e.preventDefault(); endDraw(); }, {passive:false});
 
-document.getElementById('addFrame').addEventListener('click', () => {
+document.getElementById('addFrame')?.addEventListener('click', () => {
   const w = frames[0]?.width || drawCanvas.width;
   const h = frames[0]?.height || drawCanvas.height;
   frames.splice(currentFrame + 1, 0, makeBlankCanvas(w, h));
   currentFrame++; renderCurrentFrame(); updateFrameInfo();
 });
 
-document.getElementById('deleteFrame').addEventListener('click', () => {
+document.getElementById('deleteFrame')?.addEventListener('click', () => {
   if (frames.length <= 1) return;
   frames.splice(currentFrame, 1);
   currentFrame = Math.max(0, currentFrame - 1);
   renderCurrentFrame(); updateFrameInfo();
 });
 
-document.getElementById('prevFrame').addEventListener('click', () => {
+document.getElementById('prevFrame')?.addEventListener('click', () => {
   if (currentFrame > 0) { currentFrame--; renderCurrentFrame(); updateFrameInfo(); }
 });
-document.getElementById('nextFrame').addEventListener('click', () => {
+document.getElementById('nextFrame')?.addEventListener('click', () => {
   if (currentFrame < frames.length - 1) { currentFrame++; renderCurrentFrame(); updateFrameInfo(); }
 });
 
-document.getElementById('clearFrame').addEventListener('click', () => {
+document.getElementById('clearFrame')?.addEventListener('click', () => {
   dctx.clearRect(0,0,drawCanvas.width, drawCanvas.height);
   commitCanvasToFrame();
 });
 
-document.getElementById('gifWidth').addEventListener('change', onSizeChange);
-document.getElementById('gifHeight').addEventListener('change', onSizeChange);
+document.getElementById('gifWidth')?.addEventListener('change', onSizeChange);
+document.getElementById('gifHeight')?.addEventListener('change', onSizeChange);
 function onSizeChange() {
   const w = clampInt(parseInt(document.getElementById('gifWidth').value,10),16,2048);
   const h = clampInt(parseInt(document.getElementById('gifHeight').value,10),16,2048);
@@ -335,14 +335,16 @@ uploadInput && uploadInput.addEventListener('change', async (e) => {
   } catch(err){ statusEl.textContent = 'Failed to load image.'; }
 });
 
-aiBtn.addEventListener('click', async () => {
+aiBtn?.addEventListener('click', async () => {
   const base = el('aiBasePrompt').value.trim();
   const anim = el('aiAnimPrompt').value.trim();
   const total = clampInt(parseInt(el('aiFrames').value,10), 2, 30);
   if (!base) { statusEl.textContent = 'Enter a base image prompt.'; return; }
   const w = clampInt(parseInt(el('gifWidth').value,10),16,2048);
   const h = clampInt(parseInt(el('gifHeight').value,10),16,2048);
-  aiBtn.disabled = true; btn.disabled = true; downloadLink.style.display='none'; statusEl.textContent = 'Generating base frame...';
+  if (aiBtn) aiBtn.disabled = true;
+  if (btn) btn.disabled = true;
+  downloadLink.style.display='none'; statusEl.textContent = 'Generating base frame...';
   try {
     // base frame with rate-limit handling
     const baseRes = await generateImageSafe(base, { width: w, height: h }, 'Generating base frame');
@@ -365,11 +367,12 @@ aiBtn.addEventListener('click', async () => {
   } catch (e) {
     console.error(e); statusEl.textContent = `AI generation failed: ${e.message || e}`;
   } finally {
-    aiBtn.disabled = false; btn.disabled = false;
+    if (aiBtn) aiBtn.disabled = false;
+    if (btn) btn.disabled = false;
   }
 });
 
-aiRegenBtn.addEventListener('click', async () => {
+aiRegenBtn?.addEventListener('click', async () => {
   if (!frames.length) { statusEl.textContent = 'No frames to regenerate.'; return; }
   const w = clampInt(parseInt(el('gifWidth').value,10),16,2048);
   const h = clampInt(parseInt(el('gifHeight').value,10),16,2048);
@@ -379,7 +382,9 @@ aiRegenBtn.addEventListener('click', async () => {
   if (frames[currentFrame-1]) inputs.push({ url: frames[currentFrame-1].toDataURL() });
   inputs.push({ url: frames[currentFrame].toDataURL() });
   if (frames[currentFrame+1]) inputs.push({ url: frames[currentFrame+1].toDataURL() });
-  aiRegenBtn.disabled = true; btn.disabled = true; statusEl.textContent = 'Regenerating current frame...';
+  if (aiRegenBtn) aiRegenBtn.disabled = true;
+  if (btn) btn.disabled = true;
+  statusEl.textContent = 'Regenerating current frame...';
   try {
     const res = await generateImageSafe(prompt, { width: w, height: h, image_inputs: inputs }, 'Regenerating frame');
     const img = await loadImage(res.url);
@@ -389,17 +394,20 @@ aiRegenBtn.addEventListener('click', async () => {
   } catch(e) {
     console.error(e); statusEl.textContent = `Regeneration failed: ${e.message || e}`;
   } finally {
-    aiRegenBtn.disabled = false; btn.disabled = false;
+    if (aiRegenBtn) aiRegenBtn.disabled = false;
+    if (btn) btn.disabled = false;
   }
 });
 
-aiNextBtn.addEventListener('click', async () => {
+aiNextBtn?.addEventListener('click', async () => {
   if (!frames.length) { statusEl.textContent = 'No base frame. Draw or generate one first.'; return; }
   const w = frames[0].width, h = frames[0].height;
   const anim = el('aiAnimPrompt').value.trim();
   const prev = frames[frames.length - 1];
   const prompt = `Generate the next animation frame continuing subtle motion${anim ? ` toward: "${anim}"` : ''}. Preserve subject identity and composition; minimal change for smooth animation.`;
-  aiNextBtn.disabled = true; btn.disabled = true; statusEl.textContent = 'Generating next frame...';
+  if (aiNextBtn) aiNextBtn.disabled = true;
+  if (btn) btn.disabled = true;
+  statusEl.textContent = 'Generating next frame...';
   try {
     const res = await generateImageSafe(prompt, { width: w, height: h, image_inputs: [{ url: prev.toDataURL() }] }, 'Next frame');
     const img = await loadImage(res.url);
@@ -407,7 +415,10 @@ aiNextBtn.addEventListener('click', async () => {
     frames.push(c); currentFrame = frames.length - 1; renderCurrentFrame(); updateFrameInfo();
     statusEl.textContent = 'Next frame added.';
   } catch(e){ statusEl.textContent = `Next frame failed: ${e.message || e}`; }
-  finally { aiNextBtn.disabled = false; btn.disabled = false; }
+  finally {
+    if (aiNextBtn) aiNextBtn.disabled = false;
+    if (btn) btn.disabled = false;
+  }
 });
 
 function clampInt(v, min, max) {
