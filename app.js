@@ -48,6 +48,8 @@ function dayOfYear(d=new Date()){
   const diff=d - start;
   return Math.floor(diff/86400000);
 }
+const DAYS = 366; let dayIndex = dayOfYear(); const YEAR_KEY = new Date().getUTCFullYear();
+const bc = window.BroadcastChannel ? new BroadcastChannel('nf-sync') : { postMessage() {}, onmessage: null };
 const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
 const sha = async (str)=> {
   const buf = new TextEncoder().encode(str);
