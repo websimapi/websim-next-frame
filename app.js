@@ -32,13 +32,15 @@ const prevBtn = document.getElementById('prevConsensus');
 const nextBtn = document.getElementById('nextConsensus');
 const promptInput = document.getElementById('animPrompt');
 const genNextBtn = document.getElementById('genNext');
+const confirmBtn = document.getElementById('confirmBtn');
 
-const bc = new BroadcastChannel('nextframe-consensus');
-const YEAR_KEY = new Date().getUTCFullYear();
-const DAYS = 366;
-
-let dayIndex = dayOfYear(); // 0..365
-let viewIndex = 0; // navigate within the day's confirmed chain head history (latest at 0)
+// Multiplayer DB setup
+const room = new WebsimSocket();
+let currentUserId = null;
+let unsubscribeDay = null;
+let currentEntry = null; // head entry from DB (top by votes then newest)
+let currentVotes = 0;
+let userHasVoted = false;
 
 // Utility
 function dayOfYear(d=new Date()){
@@ -68,6 +70,53 @@ function pickConsensus(arr){
 }
 
 function getHead(arr){ return arr.length ? arr[arr.length-1] : null; }
+
+function renderDbHead() {
+  if (!currentEntry) {
+    imgEl.removeAttribute('src');
+    badgeEl.hidden = true;
+    statusEl.textContent = 'No frames yet. Add a Next Frame.';
+    confirmBtn.disabled = true;
+    return;
+  }
+  imgEl.src = currentEntry.url;
+  const needed = 2;
+  badgeEl.hidden = currentVotes >= needed;
+  badgeEl.textContent = currentVotes >= needed ? '' : `Confirming… ${currentVotes}/${needed}`;
+  statusEl.textContent = currentVotes >= needed ? 'Consensus frame' : 'Awaiting confirmations';
+  confirmBtn.disabled = userHasVoted || (currentEntry.user_id === currentUserId);
+}
+
+async function subscribeToDay(di) {
+  if (unsubscribeDay) { unsubscribeDay(); unsubscribeDay = null; }
+  // votes per entry
+  const q = room.query(
+    `with vc as (
+      select v.entry_id, count(distinct v.user_id) as votes
+      from public.nf_vote v
+      group by v.entry_id
+    )
+    select e.id, e.url, e.comment, e.prev_hash, e.created_at, e.user_id,
+           coalesce(vc.votes,0) as votes
+    from public.nf_entry e
+    left join vc on vc.entry_id = e.id
+    where e.day = $1
+    order by coalesce(vc.votes,0) desc, e.created_at desc`, [di]
+  );
+  unsubscribeDay = q.subscribe(async (rows) => {
+    currentEntry = rows?.[0] || null;
+    currentVotes = currentEntry ? currentEntry.votes : 0;
+    // did current user vote?
+    if (currentEntry && currentUserId) {
+      const myVote = await room.collection('nf_vote')
+        .filter({ entry_id: currentEntry.id, user_id: currentUserId }).getList();
+      userHasVoted = (myVote && myVote.length > 0);
+    } else {
+      userHasVoted = false;
+    }
+    renderDbHead();
+  });
+}
 
 function render() {
   const col = readColumn(YEAR_KEY, dayIndex);
@@ -129,50 +178,40 @@ async function generateNextFrame(prevDataUrl, prompt){
   return res.url;
 }
 
-async function appendEntry(dataUrl, comment){
-  const col = readColumn(YEAR_KEY, dayIndex);
-  const prev = getHead(col)?.hash || '';
-  const entry = {
-    ts: Date.now(),
-    author: 'user', // in real app, user id
-    prev,
-    dataUrl,
+async function appendEntry(url, comment){
+  const colPrev = currentEntry; // current top for the day
+  const prev = colPrev?.id || null;
+  const now = Date.now();
+  const hash = await sha(`${now}|${currentUserId}|${prev||''}|${comment||''}|${url}`);
+  // create entry (creator can write their own record)
+  const entry = await room.collection('nf_entry').upsert({
+    day: dayIndex,
+    url,
     comment: comment||'',
-    status: 'pending',
-    confirmations: 0
-  };
-  entry.hash = await sha(`${entry.ts}|${entry.author}|${entry.prev}|${entry.comment}|${entry.dataUrl.slice(0,64)}`);
-  col.push(entry);
-  writeColumn(YEAR_KEY, dayIndex, col);
-  bc.postMessage({ type:'sync', year: YEAR_KEY, day: dayIndex });
-  // auto-self confirm and request peers
-  maybeConfirm(YEAR_KEY, dayIndex);
-  bc.postMessage({ type:'confirm', year: YEAR_KEY, day: dayIndex });
+    prev_hash: prev || '',
+    hash
+  });
+  // auto self-confirm as a vote
+  const voteId = `${currentUserId}-${entry.id}`;
+  await room.collection('nf_vote').upsert({ id: voteId, entry_id: entry.id });
 }
 
 document.getElementById('prevConsensus')?.addEventListener('click', ()=>{
-  // Move to previous day
   dayIndex = (dayIndex - 1 + DAYS) % DAYS;
-  render();
+  subscribeToDay(dayIndex);
 });
 document.getElementById('nextConsensus')?.addEventListener('click', ()=>{
   dayIndex = (dayIndex + 1) % DAYS;
-  render();
+  subscribeToDay(dayIndex);
 });
 
 document.getElementById('genNext')?.addEventListener('click', async ()=>{
   genNextBtn.disabled = true; statusEl.textContent = 'Generating next frame…';
   try {
-    const col = readColumn(YEAR_KEY, dayIndex);
-    const head = pickConsensus(col);
-    const prevUrl = head?.dataUrl || null;
+    const prevUrl = currentEntry?.url || null;
     const prompt = promptInput.value.trim();
     const url = await generateNextFrame(prevUrl, prompt || 'Subtle motion, preserve subject and composition.');
-    // Load URL to dataURL for local "chain" storage
-    const img = await fetch(url).then(r=>r.blob()).then(blob=>new Promise((res)=>{
-      const fr = new FileReader(); fr.onload = ()=>res(fr.result); fr.readAsDataURL(blob);
-    }));
-    await appendEntry(img, prompt);
+    await appendEntry(url, prompt);
     statusEl.textContent = 'Proposed next frame. Awaiting confirmations.';
   } catch(e){
     statusEl.textContent = `Failed: ${e.message||e}`;
@@ -181,8 +220,20 @@ document.getElementById('genNext')?.addEventListener('click', async ()=>{
   }
 });
 
-window.addEventListener('load', ()=>{
-  render();
+confirmBtn?.addEventListener('click', async ()=>{
+  if (!currentEntry || !currentUserId) return;
+  try {
+    const voteId = `${currentUserId}-${currentEntry.id}`;
+    await room.collection('nf_vote').upsert({ id: voteId, entry_id: currentEntry.id });
+    statusEl.textContent = 'Confirmation recorded.';
+  } catch(e){ statusEl.textContent = `Confirm failed: ${e.message||e}`; }
+});
+
+window.addEventListener('load', async ()=>{
+  try {
+    currentUserId = (await window.websim.getCurrentUser()).id;
+  } catch { /* ignore */ }
+  subscribeToDay(dayIndex);
 });
 
 // rate limit gate + exponential backoff retry

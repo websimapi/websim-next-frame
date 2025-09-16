@@ -1,0 +1,20 @@
+{
+  "database": {
+    "schema": {
+      "nf_entry": {
+        "id": { "type": "uuid", "description": "entry id" },
+        "day": { "type": "integer", "description": "0..365 day index" },
+        "url": { "type": "text", "description": "image URL (no base64)" },
+        "comment": { "type": "text", "description": "user prompt/notes" },
+        "prev_hash": { "type": "text", "description": "previous entry id/hash ref" },
+        "hash": { "type": "text", "description": "content hash for chain" }
+      },
+      "nf_vote": {
+        "id": { "type": "text", "description": "user_id-entry_id unique" },
+        "entry_id": { "type": "uuid", "description": "referenced entry" }
+      }
+    },
+    "instructions": "Consensus = top-voted entry per day; an entry is treated as confirmed when it reaches >=2 unique votes (including author)."
+  }
+}
+
