@@ -270,7 +270,8 @@ function getPos(evt) {
 }
 
 function commitCanvasToFrame() {
-  const c = frames[currentFrame];
+  const c = frames && frames[currentFrame];
+  if (!c || !drawCanvas || !dctx) return;
   const cctx = c.getContext('2d');
   cctx.clearRect(0,0,c.width,c.height);
   cctx.drawImage(drawCanvas, 0, 0);
