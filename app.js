@@ -10,7 +10,7 @@ let gifWorkerBlob = null;
 
 const el = (id) => document.getElementById(id);
 const drawCanvas = document.getElementById('drawCanvas');
-const dctx = drawCanvas.getContext('2d');
+const dctx = drawCanvas ? drawCanvas.getContext('2d') : null;
 const btn = el('generateGif');
 const statusEl = document.getElementById('status');
 const resultImg = el('resultImg');
@@ -280,12 +280,12 @@ function loadImage(url) {
   return new Promise((resolve, reject) => { const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => resolve(i); i.onerror = reject; i.src = url; });
 }
 
-drawCanvas.addEventListener('mousedown', e => { const p = getPos(e); startDraw(p.x,p.y); });
-drawCanvas.addEventListener('mousemove', e => { const p = getPos(e); lineTo(p.x,p.y); });
+drawCanvas && drawCanvas.addEventListener('mousedown', e => { const p = getPos(e); startDraw(p.x,p.y); });
+drawCanvas && drawCanvas.addEventListener('mousemove', e => { const p = getPos(e); lineTo(p.x,p.y); });
 window.addEventListener('mouseup', endDraw);
-drawCanvas.addEventListener('touchstart', e => { e.preventDefault(); const p = getPos(e); startDraw(p.x,p.y); }, {passive:false});
-drawCanvas.addEventListener('touchmove', e => { e.preventDefault(); const p = getPos(e); lineTo(p.x,p.y); }, {passive:false});
-drawCanvas.addEventListener('touchend', e => { e.preventDefault(); endDraw(); }, {passive:false});
+drawCanvas && drawCanvas.addEventListener('touchstart', e => { e.preventDefault(); const p = getPos(e); startDraw(p.x,p.y); }, {passive:false});
+drawCanvas && drawCanvas.addEventListener('touchmove', e => { e.preventDefault(); const p = getPos(e); lineTo(p.x,p.y); }, {passive:false});
+drawCanvas && drawCanvas.addEventListener('touchend', e => { e.preventDefault(); endDraw(); }, {passive:false});
 
 document.getElementById('addFrame').addEventListener('click', () => {
   const w = frames[0]?.width || drawCanvas.width;
@@ -325,7 +325,7 @@ function onSizeChange() {
   syncCanvasSize(w,h); renderCurrentFrame();
 }
 
-uploadInput.addEventListener('change', async (e) => {
+uploadInput && uploadInput.addEventListener('change', async (e) => {
   const file = e.target.files && e.target.files[0]; if (!file) return;
   try {
     const bmp = await createImageBitmap(file);
