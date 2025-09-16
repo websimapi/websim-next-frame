@@ -12,7 +12,7 @@ const el = (id) => document.getElementById(id);
 const drawCanvas = document.getElementById('drawCanvas');
 const dctx = drawCanvas.getContext('2d');
 const btn = el('generateGif');
-const statusEl = el('status');
+const statusEl = document.getElementById('status');
 const resultImg = el('resultImg');
 const downloadLink = el('downloadLink');
 let frames = [];
@@ -23,71 +23,167 @@ const aiRegenBtn = document.getElementById('aiRegenerateFrame');
 const uploadInput = document.getElementById('uploadImage');
 const aiNextBtn = document.getElementById('aiNextFrame');
 
-btn.addEventListener('click', async () => {
-  if (!frames.length) { statusEl.textContent = 'Add at least one frame.'; return; }
-  const width = clampInt(parseInt(el('gifWidth').value, 10), 16, 2048);
-  const height = clampInt(parseInt(el('gifHeight').value, 10), 16, 2048);
-  const fps = clampInt(parseInt(el('fps').value, 10), 1, 60);
-  const quality = clampInt(parseInt(el('quality').value, 10), 1, 30);
-  const delay = Math.round(1000 / fps);
+// Replace everything with multiplayer consensus demo
+// State: append-only daily columns (366), hash-chained entries, consensus via simple majority across tabs (demo)
 
-  if (!gifWorkerBlob) {
-    statusEl.textContent = 'Loading worker...';
-    await waitFor(() => !!gifWorkerBlob);
+const imgEl = document.getElementById('consensusFrame');
+const badgeEl = document.getElementById('confirmBadge');
+const prevBtn = document.getElementById('prevConsensus');
+const nextBtn = document.getElementById('nextConsensus');
+const promptInput = document.getElementById('animPrompt');
+const genNextBtn = document.getElementById('genNext');
+
+const bc = new BroadcastChannel('nextframe-consensus');
+const YEAR_KEY = new Date().getUTCFullYear();
+const DAYS = 366;
+
+let dayIndex = dayOfYear(); // 0..365
+let viewIndex = 0; // navigate within the day's confirmed chain head history (latest at 0)
+
+// Utility
+function dayOfYear(d=new Date()){
+  const start=new Date(Date.UTC(d.getUTCFullYear(),0,1));
+  const diff=d - start;
+  return Math.floor(diff/86400000);
+}
+const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+const sha = async (str)=> {
+  const buf = new TextEncoder().encode(str);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('');
+};
+
+// Local storage helpers (demo "db")
+function keyForDay(y, d){ return `nf:${y}:${d}`; }
+// entry: { ts, author, prev, dataUrl, comment, hash, confirmations: number, status: 'pending'|'confirmed' }
+function readColumn(y, d){ try{ return JSON.parse(localStorage.getItem(keyForDay(y,d))||'[]'); }catch{return [];} }
+function writeColumn(y, d, arr){ localStorage.setItem(keyForDay(y,d), JSON.stringify(arr)); }
+
+// Consensus: pick most recent confirmed entry; if none, most recent pending
+function pickConsensus(arr){
+  const confirmed = [...arr].filter(e=>e.status==='confirmed').sort((a,b)=>b.ts-a.ts);
+  if (confirmed.length) return confirmed[0];
+  const pending = [...arr].sort((a,b)=>b.ts-a.ts);
+  return pending[0] || null;
+}
+
+function getHead(arr){ return arr.length ? arr[arr.length-1] : null; }
+
+function render() {
+  const col = readColumn(YEAR_KEY, dayIndex);
+  const head = pickConsensus(col);
+  if (!head) {
+    imgEl.removeAttribute('src');
+    badgeEl.hidden = true;
+    statusEl.textContent = 'No frames yet. Add a Next Frame.';
+    return;
   }
+  imgEl.src = head.dataUrl;
+  badgeEl.hidden = head.status === 'confirmed' ? true : false;
+  badgeEl.textContent = head.status === 'confirmed' ? '' : 'Confirming…';
+  statusEl.textContent = head.status === 'confirmed' ? 'Consensus frame' : 'Awaiting confirmations';
+}
 
-  btn.disabled = true;
-  statusEl.textContent = 'Building GIF...';
+// Simple cross-tab consensus: require 2 confirmations (including author) for demo
+function maybeConfirm(y, d){
+  const col = readColumn(y,d);
+  const head = pickConsensus(col);
+  if (!head) return;
+  if (head.status === 'confirmed') return;
+  head.confirmations = (head.confirmations||0)+1;
+  if (head.confirmations >= 2) head.status = 'confirmed';
+  writeColumn(y,d,col);
+  render();
+}
 
-  const workerUrl = URL.createObjectURL(gifWorkerBlob);
-  const gif = new GIF({
-    workers: 2,
-    quality,
-    width,
-    height,
-    workerScript: workerUrl,
-    transparent: 0x00000000
+bc.onmessage = (ev)=>{
+  const { type, year, day } = ev.data || {};
+  if (type === 'sync' && year===YEAR_KEY && day===dayIndex) {
+    // Re-render on updates
+    render();
+  }
+  if (type === 'confirm' && year===YEAR_KEY && day===dayIndex) {
+    render();
+  }
+};
+
+// AI helper with gentle rate limiting/backoff
+let lastReq = 0;
+async function rateGate(minGap=1200){
+  const wait = Math.max(0, lastReq + minGap - Date.now());
+  if (wait>0) await sleep(wait);
+  lastReq = Date.now();
+}
+async function generateNextFrame(prevDataUrl, prompt){
+  await rateGate();
+  const res = await websim.imageGen({
+    prompt: `Create the next animation frame with a subtle incremental change. ${prompt||''}`.trim(),
+    image_inputs: prevDataUrl ? [{ url: prevDataUrl }] : undefined,
+    width: 512, height: 512
+  }).catch(async (e)=>{
+    // basic retry on rate limit
+    const msg = (e&&e.message)||'';
+    if (/429|rate|limit/i.test(msg)) { await sleep(1800); return websim.imageGen({ prompt, image_inputs: prevDataUrl ? [{ url: prevDataUrl }] : undefined, width:512, height:512 }); }
+    throw e;
   });
+  return res.url;
+}
 
-  // Add frames
-  for (const frame of frames) { gif.addFrame(frame, { delay, copy: true }); }
+async function appendEntry(dataUrl, comment){
+  const col = readColumn(YEAR_KEY, dayIndex);
+  const prev = getHead(col)?.hash || '';
+  const entry = {
+    ts: Date.now(),
+    author: 'user', // in real app, user id
+    prev,
+    dataUrl,
+    comment: comment||'',
+    status: 'pending',
+    confirmations: 0
+  };
+  entry.hash = await sha(`${entry.ts}|${entry.author}|${entry.prev}|${entry.comment}|${entry.dataUrl.slice(0,64)}`);
+  col.push(entry);
+  writeColumn(YEAR_KEY, dayIndex, col);
+  bc.postMessage({ type:'sync', year: YEAR_KEY, day: dayIndex });
+  // auto-self confirm and request peers
+  maybeConfirm(YEAR_KEY, dayIndex);
+  bc.postMessage({ type:'confirm', year: YEAR_KEY, day: dayIndex });
+}
 
-  gif.on('finished', (blob) => {
-    URL.revokeObjectURL(workerUrl);
-    const url = URL.createObjectURL(blob);
-    resultImg.src = url;
-    downloadLink.href = url;
-    downloadLink.style.display = 'inline-block';
-    statusEl.textContent = 'Done.';
-    btn.disabled = false;
-  });
-
-  gif.on('progress', (p) => {
-    statusEl.textContent = `Building GIF… ${(p * 100).toFixed(0)}%`;
-  });
-
-  gif.render();
+document.getElementById('prevConsensus').addEventListener('click', ()=>{
+  // Move to previous day
+  dayIndex = (dayIndex - 1 + DAYS) % DAYS;
+  render();
+});
+document.getElementById('nextConsensus').addEventListener('click', ()=>{
+  dayIndex = (dayIndex + 1) % DAYS;
+  render();
 });
 
-function clampInt(v, min, max) {
-  if (Number.isNaN(v)) return min;
-  return Math.max(min, Math.min(max, v));
-}
+document.getElementById('genNext').addEventListener('click', async ()=>{
+  genNextBtn.disabled = true; statusEl.textContent = 'Generating next frame…';
+  try {
+    const col = readColumn(YEAR_KEY, dayIndex);
+    const head = pickConsensus(col);
+    const prevUrl = head?.dataUrl || null;
+    const prompt = promptInput.value.trim();
+    const url = await generateNextFrame(prevUrl, prompt || 'Subtle motion, preserve subject and composition.');
+    // Load URL to dataURL for local "chain" storage
+    const img = await fetch(url).then(r=>r.blob()).then(blob=>new Promise((res)=>{
+      const fr = new FileReader(); fr.onload = ()=>res(fr.result); fr.readAsDataURL(blob);
+    }));
+    await appendEntry(img, prompt);
+    statusEl.textContent = 'Proposed next frame. Awaiting confirmations.';
+  } catch(e){
+    statusEl.textContent = `Failed: ${e.message||e}`;
+  } finally {
+    genNextBtn.disabled = false;
+  }
+});
 
-function waitFor(fn, interval = 50, timeout = 5000) {
-  return new Promise((resolve, reject) => {
-    const start = performance.now();
-    const t = setInterval(() => {
-      if (fn()) {
-        clearInterval(t);
-        resolve();
-      } else if (performance.now() - start > timeout) {
-        clearInterval(t);
-        reject(new Error('Timeout waiting for condition'));
-      }
-    }, interval);
-  });
-}
+window.addEventListener('load', ()=>{
+  render();
+});
 
 // simple sleep utility
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
@@ -317,7 +413,22 @@ aiNextBtn.addEventListener('click', async () => {
   finally { aiNextBtn.disabled = false; btn.disabled = false; }
 });
 
-window.addEventListener('load', () => {
-  initFrames(parseInt(document.getElementById('gifWidth').value,10),
-             parseInt(document.getElementById('gifHeight').value,10));
-});
+function clampInt(v, min, max) {
+  if (Number.isNaN(v)) return min;
+  return Math.max(min, Math.min(max, v));
+}
+
+function waitFor(fn, interval = 50, timeout = 5000) {
+  return new Promise((resolve, reject) => {
+    const start = performance.now();
+    const t = setInterval(() => {
+      if (fn()) {
+        clearInterval(t);
+        resolve();
+      } else if (performance.now() - start > timeout) {
+        clearInterval(t);
+        reject(new Error('Timeout waiting for condition'));
+      }
+    }, interval);
+  });
+}
