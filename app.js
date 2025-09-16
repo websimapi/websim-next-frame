@@ -93,17 +93,16 @@ async function subscribeToDay(di) {
   if (unsubscribeDay) { unsubscribeDay(); unsubscribeDay = null; }
   // votes per entry
   const q = room.query(
-    `with vc as (
-      select v.entry_id, count(distinct v.user_id) as votes
-      from public.nf_vote v
-      group by v.entry_id
-    )
-    select e.id, e.url, e.comment, e.prev_hash, e.created_at, e.user_id,
-           coalesce(vc.votes,0) as votes
-    from public.nf_entry e
-    left join vc on vc.entry_id = e.id
-    where e.day = $1
-    order by coalesce(vc.votes,0) desc, e.created_at desc`, [di]
+    `select e.id, e.url, e.comment, e.prev_hash, e.created_at, e.user_id,
+            coalesce(vc.votes,0) as votes
+     from public.nf_entry e
+     left join (
+       select v.entry_id, count(distinct v.user_id) as votes
+       from public.nf_vote v
+       group by v.entry_id
+     ) vc on vc.entry_id = e.id
+     where e.day = $1
+     order by coalesce(vc.votes,0) desc, e.created_at desc`, [di]
   );
   unsubscribeDay = q.subscribe(async (rows) => {
     currentEntry = rows?.[0] || null;
