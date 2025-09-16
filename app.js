@@ -211,6 +211,8 @@ window.addEventListener('load', async ()=>{
   // ensure user's row exists
   try { await room.collection('nf_row').upsert({ id: currentUserId, days: {} }); } catch {}
   subscribeToDay(dayIndex);
+  // Initial render after DB is ready
+  setTimeout(() => renderDbHead(), 300);
 });
 
 // rate limit gate + exponential backoff retry
