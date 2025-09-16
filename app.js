@@ -185,9 +185,6 @@ window.addEventListener('load', ()=>{
   render();
 });
 
-// simple sleep utility
-function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
-
 // rate limit gate + exponential backoff retry
 let lastAIRequestTime = 0;
 async function rateLimitedCall(fn){
