@@ -38,7 +38,7 @@ const confirmBtn = document.getElementById('confirmBtn');
 const room = new WebsimSocket();
 let currentUserId = null;
 let unsubscribeDay = null;
-let currentEntry = null; // head entry from DB (top by votes then newest)
+let currentEntry = null; // selected day's winning json {url, comment, ts, user_id}
 let currentVotes = 0;
 let userHasVoted = false;
 
@@ -78,43 +78,26 @@ function renderDbHead() {
     imgEl.removeAttribute('src');
     badgeEl.hidden = true;
     statusEl.textContent = 'No frames yet. Add a Next Frame.';
-    confirmBtn.disabled = true;
+    confirmBtn && (confirmBtn.hidden = true);
     return;
   }
   imgEl.src = currentEntry.url;
-  const needed = 2;
-  badgeEl.hidden = currentVotes >= needed;
-  badgeEl.textContent = currentVotes >= needed ? '' : `Confirming… ${currentVotes}/${needed}`;
-  statusEl.textContent = currentVotes >= needed ? 'Consensus frame' : 'Awaiting confirmations';
-  confirmBtn.disabled = userHasVoted || (currentEntry.user_id === currentUserId);
+  badgeEl.hidden = true;
+  statusEl.textContent = 'Latest submitted frame';
+  confirmBtn && (confirmBtn.hidden = true);
 }
 
 async function subscribeToDay(di) {
   if (unsubscribeDay) { unsubscribeDay(); unsubscribeDay = null; }
-  // votes per entry
-  const q = room.query(
-    `select e.id, e.url, e.comment, e.prev_hash, e.created_at, e.user_id,
-            coalesce(vc.votes,0) as votes
-     from public.nf_entry e
-     left join (
-       select v.entry_id, count(distinct v.user_id) as votes
-       from public.nf_vote v
-       group by v.entry_id
-     ) vc on vc.entry_id = e.id
-     where e.day = $1
-     order by coalesce(vc.votes,0) desc, e.created_at desc`, [di]
-  );
-  unsubscribeDay = q.subscribe(async (rows) => {
-    currentEntry = rows?.[0] || null;
-    currentVotes = currentEntry ? currentEntry.votes : 0;
-    // did current user vote?
-    if (currentEntry && currentUserId) {
-      const myVote = await room.collection('nf_vote')
-        .filter({ entry_id: currentEntry.id, user_id: currentUserId }).getList();
-      userHasVoted = (myVote && myVote.length > 0);
-    } else {
-      userHasVoted = false;
+  const q = room.query(`select r.id as user_id, r.days, r.updated_at from public.nf_row r`);
+  unsubscribeDay = q.subscribe((rows) => {
+    const candidates = [];
+    for (const r of (rows || [])) {
+      const d = r.days && (r.days[di] ?? r.days[String(di)]);
+      if (d && d.url) candidates.push({ ...d, user_id: r.user_id || r.id });
     }
+    candidates.sort((a,b)=> (b.ts||0) - (a.ts||0));
+    currentEntry = candidates[0] || null;
     renderDbHead();
   });
 }
@@ -180,21 +163,16 @@ async function generateNextFrame(prevDataUrl, prompt){
 }
 
 async function appendEntry(url, comment){
-  const colPrev = currentEntry; // current top for the day
-  const prev = colPrev?.id || null;
   const now = Date.now();
-  const hash = await sha(`${now}|${currentUserId}|${prev||''}|${comment||''}|${url}`);
-  // create entry (creator can write their own record)
-  const entry = await room.collection('nf_entry').upsert({
-    day: dayIndex,
-    url,
-    comment: comment||'',
-    prev_hash: prev || '',
-    hash
+  // load existing row
+  let me = (await room.collection('nf_row').filter({ id: currentUserId }).getList())?.[0];
+  const days = Object.assign({}, me?.days || {});
+  days[dayIndex] = { url, comment: comment||'', ts: now };
+  await room.collection('nf_row').upsert({
+    id: currentUserId,
+    days,
+    updated_at: new Date().toISOString(),
   });
-  // auto self-confirm as a vote
-  const voteId = `${currentUserId}-${entry.id}`;
-  await room.collection('nf_vote').upsert({ id: voteId, entry_id: entry.id });
 }
 
 document.getElementById('prevConsensus')?.addEventListener('click', ()=>{
@@ -222,18 +200,16 @@ document.getElementById('genNext')?.addEventListener('click', async ()=>{
 });
 
 confirmBtn?.addEventListener('click', async ()=>{
-  if (!currentEntry || !currentUserId) return;
-  try {
-    const voteId = `${currentUserId}-${currentEntry.id}`;
-    await room.collection('nf_vote').upsert({ id: voteId, entry_id: currentEntry.id });
-    statusEl.textContent = 'Confirmation recorded.';
-  } catch(e){ statusEl.textContent = `Confirm failed: ${e.message||e}`; }
+  // confirmations removed in per-user JSON model
+  statusEl.textContent = 'Confirmations are not used in this model.';
 });
 
 window.addEventListener('load', async ()=>{
   try {
     currentUserId = (await window.websim.getCurrentUser()).id;
   } catch { /* ignore */ }
+  // ensure user's row exists
+  try { await room.collection('nf_row').upsert({ id: currentUserId, days: {} }); } catch {}
   subscribeToDay(dayIndex);
 });
 

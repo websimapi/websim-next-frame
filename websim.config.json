@@ -12,9 +12,13 @@
       "nf_vote": {
         "id": { "type": "text", "description": "user_id-entry_id unique" },
         "entry_id": { "type": "uuid", "description": "referenced entry" }
+      },
+      "nf_row": {
+        "id": { "type": "text", "description": "user_id (one row per user)" },
+        "days": { "type": "jsonb", "description": "map of dayIndex (0..365) -> { url, comment, ts }" },
+        "updated_at": { "type": "timestamptz", "description": "last update time" }
       }
     },
-    "instructions": "Consensus = top-voted entry per day; an entry is treated as confirmed when it reaches >=2 unique votes (including author)."
+    "instructions": "One row per user. days holds per-day JSON at keys 0..365; each value is { url, comment, ts }. Consensus = latest ts across users for that day."
   }
 }
-
